@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "coordinate_origin": "top",
+  "_comment": "Copy to receipt_layout.json. line2_* when receipt_line_2_amount > 0. total_paid_today = this payment (combined if two lines). school_balance_remaining = outstanding after payment. No signature/stamp field — leave blank on art. internal_payment_id: optional field to place the system payment ID yourself; if omitted, it is drawn small at the top-right of the artwork when present on the payment row.",
+  "fields": {
+    "student_name": { "x": 0.265, "y": 0.286, "size": 11, "font": "Helvetica", "align": "left", "halo": true },
+    "parent_name": { "x": 0.395, "y": 0.322, "size": 11, "font": "Helvetica", "align": "left", "halo": true },
+    "grade": { "x": 0.265, "y": 0.358, "size": 11, "font": "Helvetica", "align": "left", "halo": true },
+    "payment_date": { "x": 0.79, "y": 0.286, "size": 11, "font": "Helvetica", "align": "left", "halo": true },
+    "student_code": { "x": 0.79, "y": 0.322, "size": 11, "font": "Helvetica", "align": "left", "halo": true },
+    "line_description": { "x": 0.055, "y": 0.532, "size": 10, "font": "Helvetica", "align": "left", "halo": true },
+    "line_quantity": { "x": 0.54, "y": 0.532, "size": 10, "font": "Helvetica", "align": "center", "halo": true },
+    "line_amount": { "x": 0.675, "y": 0.532, "size": 10, "font": "Helvetica", "align": "right", "halo": true },
+    "line_total": { "x": 0.85, "y": 0.532, "size": 10, "font": "Helvetica-Bold", "align": "right", "halo": true },
+    "line2_description": { "x": 0.055, "y": 0.592, "size": 10, "font": "Helvetica", "align": "left", "halo": true },
+    "line2_quantity": { "x": 0.54, "y": 0.592, "size": 10, "font": "Helvetica", "align": "center", "halo": true },
+    "line2_amount": { "x": 0.675, "y": 0.592, "size": 10, "font": "Helvetica", "align": "right", "halo": true },
+    "line2_total": { "x": 0.85, "y": 0.592, "size": 10, "font": "Helvetica-Bold", "align": "right", "halo": true },
+    "total_paid_today": { "x": 0.875, "y": 0.757, "size": 11, "font": "Helvetica-Bold", "align": "right", "halo": true },
+    "school_balance_remaining": { "x": 0.875, "y": 0.82, "size": 11, "font": "Helvetica-Bold", "align": "right", "halo": true }
+  }
+}
