@@ -5,11 +5,15 @@ On init_db(), creates students, payments, fee_structure, staff, expenses, school
 pending_reviews (saved-for-later drafts), academic calendar tables, gate_audit, and app_action_audit.
 """
 
+from __future__ import annotations
+
 import os
 import secrets
 import sqlite3
 import string
+import tempfile
 from datetime import date, datetime
+from pathlib import Path
 
 # Days after "Delete student" / transfer before rows are permanently removed from the database.
 STUDENT_DELETION_GRACE_DAYS = 25
@@ -56,6 +60,64 @@ def connect_sqlite(path=None):
     conn = sqlite3.connect(db_path, check_same_thread=False)
     configure_sqlite_connection(conn)
     return conn
+
+
+def resolve_sqlite_database_path(src: str | os.PathLike | None = None) -> Path:
+    """
+    Absolute path to the live VineLedger SQLite file.
+    Uses src if provided, else VINELEDGER_SQLITE_PATH, else SQLITE_DB_PATH (default school.db).
+    """
+    if src is not None and str(src).strip():
+        return Path(src).expanduser().resolve()
+    env = os.environ.get("VINELEDGER_SQLITE_PATH", "").strip()
+    if env:
+        return Path(env).expanduser().resolve()
+    return Path(SQLITE_DB_PATH).expanduser().resolve()
+
+
+def snapshot_sqlite_database_to_path(
+    dest_path: str | os.PathLike,
+    *,
+    src_path: str | os.PathLike | None = None,
+) -> None:
+    """
+    Copy the live database to dest_path using SQLite backup API (WAL-safe, consistent snapshot).
+    Overwrites dest_path if it already exists. Parent directories are created as needed.
+    """
+    src_p = resolve_sqlite_database_path(src_path)
+    dest_p = Path(dest_path).expanduser().resolve()
+    if not src_p.is_file():
+        raise FileNotFoundError(f"Database not found: {src_p}")
+    dest_p.parent.mkdir(parents=True, exist_ok=True)
+    if dest_p.exists():
+        dest_p.unlink()
+    src_conn = sqlite3.connect(str(src_p), timeout=60.0)
+    try:
+        configure_sqlite_connection(src_conn)
+        dest_conn = sqlite3.connect(str(dest_p))
+        try:
+            # Leave dest at SQLite defaults so the backup is typically a single portable .db file
+            # (no WAL sidecar files next to the snapshot).
+            src_conn.backup(dest_conn)
+            dest_conn.commit()
+        finally:
+            dest_conn.close()
+    finally:
+        src_conn.close()
+
+
+def snapshot_sqlite_database_bytes(src_path: str | os.PathLike | None = None) -> bytes:
+    """WAL-safe snapshot of the live database as raw SQLite file bytes (for in-app download)."""
+    fd, tmp_path = tempfile.mkstemp(suffix=".db", prefix="vineledger_snap_")
+    os.close(fd)
+    try:
+        snapshot_sqlite_database_to_path(tmp_path, src_path=src_path)
+        return Path(tmp_path).read_bytes()
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 def _maybe_first_term_carry_on_reset(conn):

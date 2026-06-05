@@ -56,6 +56,8 @@ from database import (
     new_payment_alnum_ref,
     connect_sqlite,
     SQLITE_DB_PATH,
+    resolve_sqlite_database_path,
+    snapshot_sqlite_database_bytes,
 )
 from gate_auth import clear_gate_session, load_gate_password_map, render_global_gate, touch_gate_activity
 from utils import (
@@ -8684,6 +8686,10 @@ if st.sidebar.button("Fee Structure", key="nav_fee_structure", use_container_wid
     st.session_state.current_page = 'Fee Structure'
     st.rerun()
 
+if st.sidebar.button("Database backup", key="nav_db_backup", use_container_width=True):
+    st.session_state.current_page = "Database backup"
+    st.rerun()
+
 if st.sidebar.button("School Calendar", key="nav_school_calendar", use_container_width=True):
     st.session_state.current_page = "School Calendar"
     st.rerun()
@@ -12425,6 +12431,79 @@ elif menu == "Fee Structure":
             _clear_password_field_keys("fee_save_password_field")
             st.rerun()
     
+    st.markdown('</div>', unsafe_allow_html=True)
+
+elif menu == "Database backup":
+    st.markdown('<h2 class="section-header">Database backup</h2>', unsafe_allow_html=True)
+    if not gate_user_has_admin_privileges():
+        st.markdown(
+            '<div class="warning-message">Your account cannot download a full database backup.</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("Back to Dashboard", type="primary", key="db_backup_denied_back"):
+            st.session_state.current_page = "Dashboard"
+            st.rerun()
+        st.stop()
+
+    st.markdown(
+        '<p class="vine-help-text">Download a <strong>WAL-safe</strong> snapshot of the live SQLite file '
+        "(same data as <code>school.db</code> / <code>VINELEDGER_SQLITE_PATH</code>). "
+        "On <strong>Streamlit Community Cloud</strong>, store copies off-site (for example a <strong>private</strong> "
+        "Google Drive folder); the hosted container is not a long-term archive.</p>",
+        unsafe_allow_html=True,
+    )
+    try:
+        _src_disp = resolve_sqlite_database_path(None)
+        st.caption(f"Source file: `{_src_disp}`")
+    except Exception:
+        pass
+
+    st.markdown('<div class="form-container">', unsafe_allow_html=True)
+    _db_bpw = st.text_input(
+        "Admin password (required to prepare download)",
+        type="password",
+        key="db_backup_admin_pw_field",
+    )
+    if st.button("Prepare download", type="primary", key="db_backup_prepare_btn"):
+        if (e := evaluate_admin_password_input(_db_bpw)) is not None:
+            _invalidate_admin_password_fields(e, "db_backup_admin_pw_field")
+        else:
+            try:
+                _blob = snapshot_sqlite_database_bytes()
+            except FileNotFoundError as ex:
+                st.session_state.pop("_vine_db_backup_blob", None)
+                st.session_state.pop("_vine_db_backup_filename", None)
+                st.error(str(ex))
+            else:
+                _stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                st.session_state["_vine_db_backup_blob"] = _blob
+                st.session_state["_vine_db_backup_filename"] = f"school_{_stamp}.db"
+                _audit_log(
+                    conn,
+                    "Database backup",
+                    "Prepared SQLite snapshot for download (admin).",
+                    save_mode="immediate",
+                    entity_type="database",
+                    entity_id=None,
+                )
+                _clear_password_field_keys("db_backup_admin_pw_field")
+                st.rerun()
+
+    _bdata = st.session_state.get("_vine_db_backup_blob")
+    _bfname = st.session_state.get("_vine_db_backup_filename") or "school.db"
+    if _bdata:
+        st.download_button(
+            label="Download snapshot (.db)",
+            data=_bdata,
+            file_name=_bfname,
+            mime="application/x-sqlite3",
+            type="primary",
+            key="db_backup_download_btn",
+        )
+        if st.button("Discard prepared backup", key="db_backup_discard_btn"):
+            st.session_state.pop("_vine_db_backup_blob", None)
+            st.session_state.pop("_vine_db_backup_filename", None)
+            st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
 elif menu == "School Calendar":

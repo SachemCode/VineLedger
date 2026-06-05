@@ -78,6 +78,10 @@ python scripts/backup_school_db.py --src /absolute/path/to/school.db --dest-dir 
 
 Backups are written as `backups/school_YYYYMMDD_HHMMSS.db` by default. Schedule this with **cron** or **Task Scheduler** on the same machine that runs VineLedger. Do not copy `school.db` from other laptops that were never meant to run the server—those files are not your live data.
 
+#### Streamlit Community Cloud
+
+The container filesystem is **not** a reliable archive. Use **Configuration → Database backup** in the app (admin password): download a WAL-safe `.db` snapshot, then upload it to a **private** Google Drive folder (or another off-site store) on a cadence you choose. GitHub holds **code**, not your hosted SQLite file.
+
 At the gate, **type** your account slug (**user1** … **user5**) and the matching password. Use separate accounts so `gate_audit` in SQLite can show which operator signed in, signed out, timed out, or failed login. Query example:
 
 ```bash
