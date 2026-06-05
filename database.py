@@ -456,6 +456,7 @@ def init_db():
         payment_method TEXT,
         vendor TEXT,
         receipt_number TEXT,
+        activity_id INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
@@ -741,6 +742,28 @@ def init_db():
     
     c.execute("CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(category)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_expenses_expense_date ON expenses(expense_date)")
+    try:
+        _exp_cols = {row[1] for row in c.execute("PRAGMA table_info(expenses)").fetchall()}
+        if "activity_id" not in _exp_cols:
+            c.execute("ALTER TABLE expenses ADD COLUMN activity_id INTEGER")
+            try:
+                c.execute(
+                    """
+                    UPDATE expenses
+                    SET activity_id = (
+                        SELECT sa.id FROM school_activities sa
+                        WHERE TRIM(COALESCE(sa.title, '')) = TRIM(COALESCE(expenses.category, ''))
+                        LIMIT 1
+                    )
+                    WHERE activity_id IS NULL
+                      AND TRIM(COALESCE(category, '')) != ''
+                    """
+                )
+            except sqlite3.OperationalError:
+                pass
+    except sqlite3.OperationalError:
+        pass
+    c.execute("CREATE INDEX IF NOT EXISTS idx_expenses_activity_id ON expenses(activity_id)")
     
     c.execute("CREATE INDEX IF NOT EXISTS idx_staff_staff_id ON staff(staff_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_staff_name ON staff(name)")

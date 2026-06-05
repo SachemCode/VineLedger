@@ -1267,6 +1267,41 @@ def _fetch_school_activity_purpose_labels(conn):
     return [str(r[0]).strip() for r in rows if r and str(r[0]).strip()]
 
 
+def _merge_expense_category_suggestion_options(conn, catalogue_names: list) -> list:
+    """Category suggestion dropdown: catalogue names plus planned activity titles, deduped (case-insensitive)."""
+    seen: set[str] = set()
+    merged: list[str] = []
+    for n in catalogue_names or []:
+        s = str(n).strip()
+        if not s:
+            continue
+        k = s.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        merged.append(s)
+    for t in _fetch_school_activity_purpose_labels(conn):
+        k = t.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        merged.append(t)
+    merged.sort(key=lambda x: x.lower())
+    return merged
+
+
+def _resolve_expense_activity_id(conn, category_label: Optional[str]) -> Optional[int]:
+    """If category string matches a school activity title, return that activity's id (else None)."""
+    t = (category_label or "").strip()
+    if not t:
+        return None
+    row = conn.execute(
+        "SELECT id FROM school_activities WHERE TRIM(title) = TRIM(?) LIMIT 1",
+        (t,),
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
 def get_payment_purpose_options(conn, extra_purposes=None):
     """Standard purposes plus any open school activities (unique labels)."""
     extra = tuple(extra_purposes or ())
@@ -1631,12 +1666,13 @@ def _insert_expense_row(
     payment_method,
     vendor,
     receipt_number,
+    activity_id=None,
 ):
     cur = conn.execute(
         """
         INSERT INTO expenses 
-        (category, custom_label, amount, expense_date, description, payment_method, vendor, receipt_number)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (category, custom_label, amount, expense_date, description, payment_method, vendor, receipt_number, activity_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             category if category else None,
@@ -1647,6 +1683,7 @@ def _insert_expense_row(
             payment_method,
             vendor or "",
             receipt_number or "",
+            int(activity_id) if activity_id is not None else None,
         ),
     )
     conn.commit()
@@ -3006,16 +3043,23 @@ def format_pending_expense_detail_html(draft):
     """Full-field HTML for a queued expense draft."""
     _cat = (draft.get("category") or "").strip()
     _cl = (draft.get("custom_label") or "").strip()
+    _alnk = (draft.get("activity_linked_title") or "").strip()
     qb = html_module.escape(str(draft.get("queued_by_gate_user") or "—"))
     did = html_module.escape(str(draft.get("id") or "—"))
     desc_raw = str(draft.get("description") or "")
     desc = html_module.escape(desc_raw) if desc_raw else "—"
+    _act_li = ""
+    if _alnk:
+        _act_li = f"<li><strong>Linked activity:</strong> {html_module.escape(_alnk)}</li>"
+    elif draft.get("activity_id"):
+        _act_li = f"<li><strong>Linked activity id:</strong> {html_module.escape(str(draft.get('activity_id')))}</li>"
     return (
         "<ul style='margin: 0.5rem 0 1rem 1.25rem;'>"
         f"<li><strong>Draft id:</strong> {did}</li>"
         f"<li><strong>Queued by:</strong> {qb}</li>"
         f"<li><strong>Date:</strong> {html_module.escape(str(draft.get('expense_date', '—')))}</li>"
         f"<li><strong>Category:</strong> {html_module.escape(_cat or '—')}</li>"
+        f"{_act_li}"
         f"<li><strong>Custom label:</strong> {html_module.escape(_cl or '—')}</li>"
         f"<li><strong>Amount (KSH):</strong> {html_module.escape(str(draft.get('amount', '—')))}</li>"
         f"<li><strong>Method:</strong> {html_module.escape(str(draft.get('payment_method', '—')))}</li>"
@@ -3459,6 +3503,7 @@ def _apply_all_pending_expenses(conn):
                 payment_method=_d["payment_method"],
                 vendor=_d.get("vendor") or "",
                 receipt_number=_d.get("receipt_number") or "",
+                activity_id=_d.get("activity_id"),
             )
             remove_pending_expense(conn, _did)
             qb = (_d.get("queued_by_gate_user") or "unknown")
@@ -3794,6 +3839,7 @@ def _apply_selected_pending_expenses(conn, draft_ids):
                 payment_method=_d["payment_method"],
                 vendor=_d.get("vendor") or "",
                 receipt_number=_d.get("receipt_number") or "",
+                activity_id=_d.get("activity_id"),
             )
             remove_pending_expense(conn, _did)
             qb = (_d.get("queued_by_gate_user") or "unknown")
@@ -6588,9 +6634,13 @@ def _render_school_activity_page(conn):
     st.markdown('<h2 class="section-header">School Activity</h2>', unsafe_allow_html=True)
     st.caption(
         "Create **planned** activities (trips, events, etc.). Each title is offered as its own **purpose** when you "
-        "record payments under **Payment Management → Add payment**. Use **Manage participants** to build and print a list of learners."
+        "record payments under **Payment Management → Add payment**, and as a **category suggestion** under "
+        "**Add Expense → Record expense**. Use **Manage participants** for rosters and **Manage expenses** for costs tied to an activity."
     )
-    tab_act, tab_part = st.tabs(["Activities", "Manage participants"])
+    tab_act, tab_part, tab_exp = st.tabs(["Activities", "Manage participants", "Manage expenses"])
+
+    with tab_exp:
+        _render_school_activity_manage_expenses(conn)
 
     with tab_act:
         with st.form("add_school_activity_form"):
@@ -6614,7 +6664,9 @@ def _render_school_activity_page(conn):
                         (t, (adesc or "").strip(), adiso, (aloc or "").strip()),
                     )
                     conn.commit()
-                    st.success("Activity saved as **planned**. It will appear in payment purposes.")
+                    st.success(
+                        "Activity saved as **planned**. It will appear in payment purposes and under **Add Expense → Category suggestion**."
+                    )
                     st.rerun()
 
         activities_all = pd.read_sql(
@@ -6828,6 +6880,119 @@ th {{ background: #f3f4f6; }}
                     st.rerun()
 
 
+def _render_school_activity_manage_expenses(conn):
+    """List and remove expenses linked to a school activity (category = activity title or activity_id)."""
+    if st.session_state.pop("_school_activity_expense_deleted", False):
+        st.success("Expense removed.")
+    rows = conn.execute(
+        """
+        SELECT id, title, status FROM school_activities
+        ORDER BY datetime(COALESCE(updated_at, created_at)) DESC
+        """
+    ).fetchall()
+    if not rows:
+        st.info("No activities yet. Add one under **Activities**.")
+        return
+
+    labels = {int(r[0]): f"{r[1]} · {r[2]}" for r in rows}
+    aid = st.selectbox(
+        "Activity",
+        options=list(labels.keys()),
+        format_func=lambda i: labels[int(i)],
+        key="sa_manage_exp_activity",
+    )
+    title_row = conn.execute("SELECT title FROM school_activities WHERE id=?", (int(aid),)).fetchone()
+    atitle = str(title_row[0]).strip() if title_row and title_row[0] is not None else ""
+
+    exp_df = pd.read_sql(
+        """
+        SELECT id, amount, expense_date, category, custom_label, description, payment_method, vendor,
+               receipt_number, activity_id
+        FROM expenses
+        WHERE activity_id = ? OR (activity_id IS NULL AND TRIM(COALESCE(category, '')) = TRIM(?))
+        ORDER BY datetime(expense_date) DESC
+        LIMIT 500
+        """,
+        conn,
+        params=(int(aid), atitle),
+    )
+    st.caption(
+        "Expenses appear here when **Add Expense → Category suggestion** used this activity’s title, "
+        "or when the row is linked by **activity id** after a schema upgrade."
+    )
+    if exp_df.empty:
+        st.info(
+            "No expenses for this activity yet. Go to **Add Expense → Record expense**, pick this activity’s title "
+            "under **Category suggestion**, then **Save now** or **Save for later**."
+        )
+    else:
+        show = exp_df.rename(
+            columns={
+                "id": "Expense id",
+                "amount": "Amount (KSH)",
+                "expense_date": "Date",
+                "category": "Category",
+                "custom_label": "Custom label",
+                "description": "Description",
+                "payment_method": "Method",
+                "vendor": "Vendor",
+                "receipt_number": "Receipt #",
+                "activity_id": "Activity link id",
+            }
+        )
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("Remove an expense")
+    st.caption("Deletes one row permanently. Requires the **admin** password.")
+    if exp_df.empty:
+        return
+    del_pick = st.selectbox(
+        "Expense to remove",
+        options=exp_df["id"].astype(int).tolist(),
+        format_func=lambda eid: (
+            f"id {int(eid)} — KSH {float(exp_df.loc[exp_df['id']==eid, 'amount'].iloc[0]):,.0f} — "
+            f"{str(exp_df.loc[exp_df['id']==eid, 'description'].iloc[0] or '')[:50]!s}"
+        ),
+        key="sa_manage_exp_delete_pick",
+    )
+    del_pw = st.text_input(
+        "Admin password",
+        type="password",
+        key="sa_manage_exp_delete_pw",
+        placeholder="Admin password",
+    )
+    if st.button("Delete selected expense", type="primary", key="sa_manage_exp_delete_btn"):
+        if not (del_pw or "").strip():
+            st.warning("Enter the admin password.")
+        elif (e := evaluate_admin_password_input(del_pw)) is not None:
+            _invalidate_admin_password_fields(e, "sa_manage_exp_delete_pw")
+        else:
+            cur = conn.execute(
+                """
+                DELETE FROM expenses
+                WHERE id = ? AND (activity_id = ? OR (activity_id IS NULL AND TRIM(COALESCE(category, '')) = TRIM(?)))
+                """,
+                (int(del_pick), int(aid), atitle),
+            )
+            conn.commit()
+            if cur.rowcount < 1:
+                st.warning("That expense was not removed (it may no longer match this activity).")
+            else:
+                _audit_log(
+                    conn,
+                    "Expense",
+                    f"Deleted expense id {int(del_pick)} linked to school activity id {int(aid)}.",
+                    save_mode="immediate",
+                    entity_type="expense",
+                    entity_id=int(del_pick),
+                    detail=json.dumps({"activity_id": int(aid), "activity_title": atitle}, default=str),
+                )
+                st.session_state["_school_activity_expense_deleted"] = True
+                _clear_password_field_keys("sa_manage_exp_delete_pw")
+                st.rerun()
+
+
 def _render_pending_expenses_tab(conn):
     _data_persistence_help_expander("expense_pending")
     _pend = list(st.session_state.get("pending_expense_drafts") or [])
@@ -6951,6 +7116,7 @@ def _render_pending_expenses_tab(conn):
                 payment_method=_d["payment_method"],
                 vendor=_d.get("vendor") or "",
                 receipt_number=_d.get("receipt_number") or "",
+                activity_id=_d.get("activity_id"),
             )
             remove_pending_expense(conn, _did)
             qb = (_d.get("queued_by_gate_user") or "unknown")
@@ -12759,12 +12925,15 @@ elif menu == "Add Expense":
                         key=lambda s: s.lower(),
                     )
                     category_options = [c for c in category_options if c.strip().lower() != "staff"]
-                    cat_select_options = [_EXPENSE_CAT_NONE] + category_options
+                    cat_select_options = [_EXPENSE_CAT_NONE] + _merge_expense_category_suggestion_options(
+                        conn, category_options
+                    )
 
                     selected_category_ui = st.selectbox(
                         "Category suggestion",
                         options=cat_select_options,
-                        help="Pick a catalogue bucket if it fits. Skip this if you use a custom label instead.",
+                        help="Catalogue buckets plus **planned school activities** (same titles as under **School Activity**). "
+                        "Choosing an activity title links the expense to that activity for **Manage expenses**.",
                     )
 
                     custom_label = st.text_input(
@@ -12835,6 +13004,14 @@ elif menu == "Add Expense":
                     if selected_category_ui == _EXPENSE_CAT_NONE
                     else selected_category_ui
                 )
+                _res_aid = _resolve_expense_activity_id(conn, category_for_db)
+                _linked_title = None
+                if _res_aid is not None:
+                    _lt = conn.execute(
+                        "SELECT title FROM school_activities WHERE id=?",
+                        (int(_res_aid),),
+                    ).fetchone()
+                    _linked_title = str(_lt[0]).strip() if _lt and _lt[0] is not None else None
 
                 _payload_base = {
                     "category": category_for_db,
@@ -12845,6 +13022,8 @@ elif menu == "Add Expense":
                     "payment_method": payment_method,
                     "vendor": vendor,
                     "receipt_number": receipt_number,
+                    "activity_id": _res_aid,
+                    "activity_linked_title": _linked_title,
                 }
 
                 if save_now:
@@ -12875,6 +13054,7 @@ elif menu == "Add Expense":
                                     payment_method=_payload_base["payment_method"],
                                     vendor=_payload_base["vendor"],
                                     receipt_number=_payload_base["receipt_number"],
+                                    activity_id=_payload_base.get("activity_id"),
                                 )
                                 _audit_log(
                                     conn,
