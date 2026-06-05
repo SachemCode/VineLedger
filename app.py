@@ -1961,10 +1961,42 @@ def _data_persistence_help_expander(scope_key: str):
             "- **Save for later** drafts (Pending Reviews) are rows in the **`pending_reviews`** table inside your "
             "SQLite file (`school.db` or `VINELEDGER_SQLITE_PATH`). They are not “browser-only” temporary storage.\n"
             "- **Save now** for staff, expenses, payments, and students writes straight to the main tables in the same file.\n"
-            "- **If the SQLite file is replaced or wiped** (for example some hosted platforms reset the container disk on "
-            "redeploy or sleep), **everything** in that file disappears together—drafts and live data. Use "
-            "**Configuration → Database backup** regularly and keep copies off-site (private cloud drive).\n"
+            "- If **approved balances or payments later look “gone”** after a platform restart or redeploy, the usual cause is "
+            "the **entire SQLite file was replaced** (common on **Streamlit Community Cloud**). That is not random loss inside "
+            "the app logic—use **Configuration → Database backup** and read **`DEPLOYMENT.md`**.\n"
+            "- **If the SQLite file is replaced or wiped**, **everything** in that file disappears together—drafts and live data. "
+            "Keep dated backups off-site (private cloud drive).\n"
+            "- On Streamlit Community Cloud, add **`[vineledger] ephemeral_storage = true`** to **Secrets** to show a persistent "
+            "sidebar reminder after sign-in.\n"
             "- For production on the web, prefer a host with a **persistent disk** or an external database you control."
+        )
+
+
+def _safe_vineledger_secrets_dict():
+    try:
+        v = st.secrets.get("vineledger", {})
+        if v is None:
+            return {}
+        return dict(v)
+    except Exception:
+        return {}
+
+
+def _vineledger_ephemeral_storage_enabled():
+    d = _safe_vineledger_secrets_dict()
+    raw = d.get("ephemeral_storage")
+    if raw is True:
+        return True
+    if isinstance(raw, str) and raw.strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return False
+
+
+def _append_db_backup_reminder(parts, n_applied):
+    if n_applied and int(n_applied) > 0:
+        parts.append(
+            "\n**Data safety:** download a full database copy under **Configuration → Database backup** "
+            "so you can recover if this server replaces `school.db` (see **DEPLOYMENT.md** in the repo)."
         )
 
 
@@ -3289,6 +3321,7 @@ def _render_pending_reviews_tab(conn):
             else:
                 _n, _errs = _apply_all_pending_manage_student_reviews(conn)
                 _parts = [f"**Confirm all:** applied **{_n}** draft(s)."]
+                _append_db_backup_reminder(_parts, _n)
                 if _errs:
                     _parts.append("Notes:")
                     for _e in _errs[:15]:
@@ -3314,6 +3347,7 @@ def _render_pending_reviews_tab(conn):
                 else:
                     _n, _errs = _apply_selected_manage_student_reviews(conn, _suffs)
                     _parts = [f"**Confirm selected:** applied **{_n}** draft(s)."]
+                    _append_db_backup_reminder(_parts, _n)
                     if _errs:
                         _parts.append("Notes:")
                         for _e in _errs[:15]:
@@ -4795,10 +4829,12 @@ def _render_manage_balance_tab(conn):
                             if _brep["errors"]:
                                 for sid, msg in _brep["errors"][:10]:
                                     st.warning(f"Student id {sid}: {msg}")
-                            st.session_state["_student_flash_msg"] = (
+                            _flash_bits = [
                                 f"**{_bal_grade}** — updated **{_brep['updated']}** balance(s)"
                                 f" ({_brep['skipped']} unchanged)."
-                            )
+                            ]
+                            _append_db_backup_reminder(_flash_bits, _brep.get("updated") or 0)
+                            st.session_state["_student_flash_msg"] = "\n\n".join(_flash_bits)
                             st.rerun()
                 with _bb2:
                     if st.button("Save for later", key="manage_balance_bulk_later"):
@@ -5813,6 +5849,7 @@ def _render_pending_manual_payments_tab(conn):
             else:
                 _n, _errs = _apply_all_pending_manual_payments(conn)
                 _parts = [f"**Confirm all:** recorded **{_n}** payment(s)."]
+                _append_db_backup_reminder(_parts, _n)
                 if _errs:
                     _parts.append("Notes:")
                     for _e in _errs[:15]:
@@ -5838,6 +5875,7 @@ def _render_pending_manual_payments_tab(conn):
                 else:
                     _n, _errs = _apply_selected_pending_manual_payments(conn, _ids)
                     _parts = [f"**Confirm selected:** recorded **{_n}** payment(s)."]
+                    _append_db_backup_reminder(_parts, _n)
                     if _errs:
                         _parts.append("Notes:")
                         for _e in _errs[:15]:
@@ -6249,6 +6287,7 @@ def _render_pending_expenses_tab(conn):
             else:
                 _n, _errs = _apply_all_pending_expenses(conn)
                 _parts = [f"**Confirm all:** recorded **{_n}** expense(s)."]
+                _append_db_backup_reminder(_parts, _n)
                 if _errs:
                     _parts.append("Notes:")
                     for _e in _errs[:15]:
@@ -6274,6 +6313,7 @@ def _render_pending_expenses_tab(conn):
                 else:
                     _n, _errs = _apply_selected_pending_expenses(conn, _eids)
                     _parts = [f"**Confirm selected:** recorded **{_n}** expense(s)."]
+                    _append_db_backup_reminder(_parts, _n)
                     if _errs:
                         _parts.append("Notes:")
                         for _e in _errs[:15]:
@@ -8588,6 +8628,12 @@ if st.session_state.get("gate_user"):
         log_gate_event(conn, str(st.session_state.gate_user), "logout", None)
         clear_gate_session()
         st.rerun()
+    if _vineledger_ephemeral_storage_enabled():
+        st.sidebar.warning(
+            "**Hosting notice:** this deployment is marked as **ephemeral storage** in Secrets. "
+            "The platform may replace `school.db` on redeploy—**download backups** under "
+            "**Configuration → Database backup** after important work. See **DEPLOYMENT.md**."
+        )
 
 # Permanent sidebar navigation with buttons
 st.sidebar.markdown("### Navigation")

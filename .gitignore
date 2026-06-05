@@ -1,0 +1,20 @@
+# Local secrets — never commit
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
+
+# Local DB backups (see scripts/backup_school_db.py)
+backups/
