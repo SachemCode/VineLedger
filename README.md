@@ -114,6 +114,9 @@ The default admin password for protected actions is **1234** (set in the app cod
 - Fee amounts live under **Configuration → Fee Structure**.
 - Each student’s balance reflects their fees minus payments. When the school calendar is set up, balances follow **term billing** (see below).
 - A small **(co)** above a balance means money was **carried over** from a previous term. Click it to see details under **Payment Management → Carry On**.
+- **Recovering balances:** If balances disappear but staff had saved under **Manage Students**, check **`app_action_audit`** (see query above). You can replay the latest audited balance per learner with  
+  `python scripts/recover_balances_from_audit.py school.db`  
+  Review the output, then add **`--apply`** to write those values back into `students`.
 
 ### Payments
 

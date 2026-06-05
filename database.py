@@ -83,8 +83,12 @@ def _maybe_first_term_carry_on_reset(conn):
 
 def _maybe_balance_reimport_reset(conn):
     """
-    One-time: mark all student balances as not set so staff can re-import spreadsheets.
-    Skipped after balance_reimport_reset_done=1.
+    Migration: ensure balance_reimport_reset_done exists and mark it complete.
+
+    Earlier builds called reset_all_student_balances_not_set() here once, which cleared
+    every learner balance on first app start — that was unsafe for live databases.
+    We only flip the flag now; use scripts/recover_balances_from_audit.py if you need
+    to restore balances from app_action_audit after a bad run.
     """
     c = conn.cursor()
     try:
@@ -98,9 +102,6 @@ def _maybe_balance_reimport_reset(conn):
     ).fetchone()
     if row and int(row[0] or 0):
         return
-    from school_calendar import reset_all_student_balances_not_set
-
-    reset_all_student_balances_not_set(conn, do_commit=False)
     c.execute("UPDATE school_calendar_settings SET balance_reimport_reset_done=1 WHERE id=1")
 
 

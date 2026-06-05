@@ -1207,6 +1207,7 @@ def _audit_student_payload_detail(merged):
         "parent2_name",
         "parent2_phone",
         "balance",
+        "balance_status",
         "has_transport",
         "has_meal",
         "is_sponsored",
