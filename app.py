@@ -1940,9 +1940,7 @@ def pending_reviews_notification_surface_count():
 
 
 def ensure_pending_reviews_loaded(conn):
-    """Restore Save-for-later queues from SQLite after a browser refresh."""
-    if st.session_state.get("_pending_reviews_hydrated"):
-        return
+    """Reload Save-for-later queues from SQLite every run (source of truth; survives refresh)."""
     data = fetch_all_pending_reviews(conn)
     st.session_state.pending_student_edits = data["students"]
     st.session_state.pending_student_transfers = data.get("student_transfers") or {}
@@ -1954,67 +1952,80 @@ def ensure_pending_reviews_loaded(conn):
     st.session_state.pending_balance_drafts = data.get("balance_drafts") or []
     st.session_state.pending_meal_drafts = data.get("meal_drafts") or []
     st.session_state.pending_transport_drafts = data.get("transport_drafts") or []
-    st.session_state._pending_reviews_hydrated = True
+
+
+def _data_persistence_help_expander(scope_key: str):
+    """Explain SQLite + pending_reviews vs ephemeral hosting (Streamlit Community Cloud)."""
+    with st.expander("Where is this data stored?", expanded=False):
+        st.markdown(
+            "- **Save for later** drafts (Pending Reviews) are rows in the **`pending_reviews`** table inside your "
+            "SQLite file (`school.db` or `VINELEDGER_SQLITE_PATH`). They are not “browser-only” temporary storage.\n"
+            "- **Save now** for staff, expenses, payments, and students writes straight to the main tables in the same file.\n"
+            "- **If the SQLite file is replaced or wiped** (for example some hosted platforms reset the container disk on "
+            "redeploy or sleep), **everything** in that file disappears together—drafts and live data. Use "
+            "**Configuration → Database backup** regularly and keep copies off-site (private cloud drive).\n"
+            "- For production on the web, prefer a host with a **persistent disk** or an external database you control."
+        )
 
 
 def queue_pending_student_edit(conn, student_id, payload):
     sid = int(student_id)
-    st.session_state.pending_student_edits[sid] = payload
     upsert_pending_student_review(conn, sid, payload)
+    st.session_state.pending_student_edits[sid] = payload
 
 
 def remove_pending_student_edit(conn, student_id):
     sid = int(student_id)
-    st.session_state.pending_student_edits.pop(sid, None)
     delete_pending_student_review(conn, sid)
+    st.session_state.pending_student_edits.pop(sid, None)
 
 
 def queue_pending_student_transfer(conn, student_id, payload):
     sid = int(student_id)
-    st.session_state.pending_student_transfers[sid] = payload
     upsert_pending_student_transfer_review(conn, sid, payload)
+    st.session_state.pending_student_transfers[sid] = payload
 
 
 def remove_pending_student_transfer(conn, student_id):
     sid = int(student_id)
-    st.session_state.pending_student_transfers.pop(sid, None)
     delete_pending_student_transfer_review(conn, sid)
+    st.session_state.pending_student_transfers.pop(sid, None)
 
 
 def queue_pending_student_deletion(conn, student_id, payload):
     sid = int(student_id)
-    st.session_state.pending_student_deletions[sid] = payload
     upsert_pending_student_deletion_review(conn, sid, payload)
+    st.session_state.pending_student_deletions[sid] = payload
 
 
 def remove_pending_student_deletion(conn, student_id):
     sid = int(student_id)
-    st.session_state.pending_student_deletions.pop(sid, None)
     delete_pending_student_deletion_review(conn, sid)
+    st.session_state.pending_student_deletions.pop(sid, None)
 
 
 def queue_pending_manual_payment(conn, draft):
-    st.session_state.pending_manual_payment_drafts.append(draft)
     insert_pending_manual_payment_review(conn, draft)
+    st.session_state.pending_manual_payment_drafts.append(draft)
 
 
 def remove_pending_manual_payment(conn, draft_id):
+    delete_pending_manual_payment_review(conn, draft_id)
     st.session_state.pending_manual_payment_drafts = [
         x for x in st.session_state.pending_manual_payment_drafts if x["id"] != draft_id
     ]
-    delete_pending_manual_payment_review(conn, draft_id)
 
 
 def queue_pending_expense(conn, draft):
-    st.session_state.pending_expense_drafts.append(draft)
     insert_pending_expense_review(conn, draft)
+    st.session_state.pending_expense_drafts.append(draft)
 
 
 def remove_pending_expense(conn, draft_id):
+    delete_pending_expense_review(conn, draft_id)
     st.session_state.pending_expense_drafts = [
         x for x in st.session_state.pending_expense_drafts if x["id"] != draft_id
     ]
-    delete_pending_expense_review(conn, draft_id)
 
 
 def new_bulk_draft_id():
@@ -2028,65 +2039,65 @@ def _upsert_bulk_draft_list(session_key, draft):
 
 
 def queue_pending_club_draft(conn, draft):
-    _upsert_bulk_draft_list("pending_club_drafts", draft)
     upsert_pending_bulk_draft(conn, DRAFT_TYPE_CLUB_BULK, draft)
+    _upsert_bulk_draft_list("pending_club_drafts", draft)
 
 
 def remove_pending_club_draft(conn, draft_id):
+    delete_pending_bulk_draft(conn, DRAFT_TYPE_CLUB_BULK, draft_id)
     st.session_state.pending_club_drafts = [
         d for d in st.session_state.get("pending_club_drafts") or [] if d.get("id") != draft_id
     ]
-    delete_pending_bulk_draft(conn, DRAFT_TYPE_CLUB_BULK, draft_id)
 
 
 def queue_pending_grade_contact_draft(conn, draft):
-    _upsert_bulk_draft_list("pending_grade_contact_drafts", draft)
     upsert_pending_bulk_draft(conn, DRAFT_TYPE_GRADE_CONTACT_BULK, draft)
+    _upsert_bulk_draft_list("pending_grade_contact_drafts", draft)
 
 
 def remove_pending_grade_contact_draft(conn, draft_id):
+    delete_pending_bulk_draft(conn, DRAFT_TYPE_GRADE_CONTACT_BULK, draft_id)
     st.session_state.pending_grade_contact_drafts = [
         d
         for d in st.session_state.get("pending_grade_contact_drafts") or []
         if d.get("id") != draft_id
     ]
-    delete_pending_bulk_draft(conn, DRAFT_TYPE_GRADE_CONTACT_BULK, draft_id)
 
 
 def queue_pending_balance_draft(conn, draft):
-    _upsert_bulk_draft_list("pending_balance_drafts", draft)
     upsert_pending_bulk_draft(conn, DRAFT_TYPE_BALANCE_BULK, draft)
+    _upsert_bulk_draft_list("pending_balance_drafts", draft)
 
 
 def remove_pending_balance_draft(conn, draft_id):
+    delete_pending_bulk_draft(conn, DRAFT_TYPE_BALANCE_BULK, draft_id)
     st.session_state.pending_balance_drafts = [
         d for d in st.session_state.get("pending_balance_drafts") or [] if d.get("id") != draft_id
     ]
-    delete_pending_bulk_draft(conn, DRAFT_TYPE_BALANCE_BULK, draft_id)
 
 
 def queue_pending_meal_draft(conn, draft):
-    _upsert_bulk_draft_list("pending_meal_drafts", draft)
     upsert_pending_bulk_draft(conn, DRAFT_TYPE_MEAL_BULK, draft)
+    _upsert_bulk_draft_list("pending_meal_drafts", draft)
 
 
 def remove_pending_meal_draft(conn, draft_id):
+    delete_pending_bulk_draft(conn, DRAFT_TYPE_MEAL_BULK, draft_id)
     st.session_state.pending_meal_drafts = [
         d for d in st.session_state.get("pending_meal_drafts") or [] if d.get("id") != draft_id
     ]
-    delete_pending_bulk_draft(conn, DRAFT_TYPE_MEAL_BULK, draft_id)
 
 
 def queue_pending_transport_draft(conn, draft):
-    _upsert_bulk_draft_list("pending_transport_drafts", draft)
     upsert_pending_bulk_draft(conn, DRAFT_TYPE_TRANSPORT_BULK, draft)
+    _upsert_bulk_draft_list("pending_transport_drafts", draft)
 
 
 def remove_pending_transport_draft(conn, draft_id):
+    delete_pending_bulk_draft(conn, DRAFT_TYPE_TRANSPORT_BULK, draft_id)
     st.session_state.pending_transport_drafts = [
         d for d in st.session_state.get("pending_transport_drafts") or [] if d.get("id") != draft_id
     ]
-    delete_pending_bulk_draft(conn, DRAFT_TYPE_TRANSPORT_BULK, draft_id)
 
 
 def _dataframe_to_contact_rows(df):
@@ -5761,6 +5772,7 @@ def format_student_deletion_draft_summary_html(conn, student_id, payload):
 
 
 def _render_pending_manual_payments_tab(conn):
+    _data_persistence_help_expander("payment_pending_manual")
     _pend = list(st.session_state.get("pending_manual_payment_drafts") or [])
     if not _pend:
         st.info("No pending payment drafts. Use **Save for later** on the **Add payment** tab.")
@@ -6196,6 +6208,7 @@ th {{ background: #f3f4f6; }}
 
 
 def _render_pending_expenses_tab(conn):
+    _data_persistence_help_expander("expense_pending")
     _pend = list(st.session_state.get("pending_expense_drafts") or [])
     if not _pend:
         st.info("No pending expense drafts. Use **Save for later** on the **Record expense** tab.")
@@ -8759,6 +8772,8 @@ if _vine_flash_warn:
 
 if menu == "Dashboard":
     st.markdown('<h2 class="section-header">Financial Overview</h2>', unsafe_allow_html=True)
+    if st.session_state.get("gate_user"):
+        _data_persistence_help_expander("dashboard")
 
     _auto_msgs = run_calendar_automation_if_due(conn)
     if _auto_msgs:
@@ -8999,6 +9014,7 @@ elif menu == "Manage Students":
     )
 
     with tab_pending:
+        _data_persistence_help_expander("manage_students_pending")
         _render_pending_reviews_tab(conn)
 
     with tab_meal:
@@ -10704,6 +10720,7 @@ elif menu == "Payment Management":
         "The **Upload bank statement** tab requires your **sign-in password** before PDF upload (restricted accounts cannot unlock it); "
         "**Add payment** does not."
     )
+    _data_persistence_help_expander("payment_management")
 
     _n_pay_pend = len(st.session_state.get("pending_manual_payment_drafts") or [])
     _pay_tabs = ["Upload bank statement", "Add payment"]
@@ -11385,7 +11402,8 @@ elif menu == "Add Staff":
     if not check_password():
         st.stop()
     st.markdown('<h2 class="section-header">Staff Registration</h2>', unsafe_allow_html=True)
-    
+    _data_persistence_help_expander("add_staff")
+
     # Get next staff ID
     cursor = conn.cursor()
     cursor.execute("SELECT MAX(CAST(SUBSTR(staff_id, 4) AS INTEGER)) FROM staff WHERE staff_id LIKE 'STF%'")
@@ -12002,6 +12020,7 @@ elif menu == "Add Expense":
         st.success(_flash)
 
     st.markdown('<h2 class="section-header">Add New Expense</h2>', unsafe_allow_html=True)
+    _data_persistence_help_expander("add_expense")
 
     _n_exp_pend = len(st.session_state.get("pending_expense_drafts") or [])
     _exp_tab_record = "Record expense"

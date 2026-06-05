@@ -82,6 +82,8 @@ Backups are written as `backups/school_YYYYMMDD_HHMMSS.db` by default. Schedule 
 
 The container filesystem is **not** a reliable archive. Use **Configuration → Database backup** in the app (admin password): download a WAL-safe `.db` snapshot, then upload it to a **private** Google Drive folder (or another off-site store) on a cadence you choose. GitHub holds **code**, not your hosted SQLite file.
 
+**Pending Reviews and “Save for later”** are stored in the same SQLite file (`pending_reviews` table). They are **not** held only in browser memory. If drafts vanish after a platform **redeploy** or **disk reset**, the whole database file was replaced—restore from your most recent downloaded backup.
+
 At the gate, **type** your account slug (**user1** … **user5**) and the matching password. Use separate accounts so `gate_audit` in SQLite can show which operator signed in, signed out, timed out, or failed login. Query example:
 
 ```bash
